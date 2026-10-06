@@ -1043,6 +1043,7 @@ Commands:
   %(prog)s status                     show current account
   %(prog)s switch                     rotate to the next account
   %(prog)s switch <num|email>         switch to a specific account
+  %(prog)s switch -                   switch back to the previous account
   %(prog)s add                        add the current account
   %(prog)s add-token [TOKEN|-]        register a setup-token or API key
   %(prog)s remove <num|email>         remove an account
