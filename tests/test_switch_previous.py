@@ -1,10 +1,13 @@
 """Tests for `cswap switch -`, which rolls back to the previous account."""
 
 import json
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from claude_swap import cli
 from claude_swap.exceptions import AccountNotFoundError
 from claude_swap.models import Platform
 from claude_swap.switcher import ClaudeAccountSwitcher
@@ -157,3 +160,15 @@ class TestSwitchToPrevious:
         s.switch_to("-", json_output=True)
 
         assert _live_email(temp_home) == "a@example.com"
+
+
+class TestSwitchDashCommand:
+    def test_switch_dash_reaches_switch_to(self):
+        with patch("claude_swap.cli.ClaudeAccountSwitcher") as switcher_cls, \
+             patch.object(sys, "argv", ["claude-swap", "switch", "-"]), \
+             patch("os.geteuid", return_value=1000, create=True), \
+             patch("claude_swap.update_check.check_for_update", return_value=None):
+            cli.main()
+        switcher_cls.return_value.switch_to.assert_called_once_with(
+            "-", json_output=False, force=False
+        )

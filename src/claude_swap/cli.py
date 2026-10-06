@@ -87,8 +87,9 @@ def _translate_subcommand(argv: list[str]) -> list[str]:
     verb, rest = argv[0], argv[1:]
 
     if verb == "switch":
-        # Bare `switch` rotates; `switch <num|email>` jumps to that account.
-        if rest and not rest[0].startswith("-"):
+        # Bare `switch` rotates; `switch <num|email>` jumps to that account,
+        # and `switch -` back to the previous one.
+        if rest and (rest[0] == "-" or not rest[0].startswith("-")):
             return ["--switch-to", *rest]
         return ["--switch", *rest]
 
