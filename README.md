@@ -70,6 +70,12 @@ cswap switch user@example.com
 cswap switch dev                # or by alias, once set with `cswap alias 2 dev`
 ```
 
+Or go back to the account you were on before the last switch (like `cd -`; run it again to toggle):
+
+```bash
+cswap switch -
+```
+
 Not sure which one? `cswap list` is the dashboard — every account's 5-hour and 7-day usage and reset times at a glance:
 
 ```bash

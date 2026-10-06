@@ -1,0 +1,174 @@
+"""Tests for `cswap switch -`, which rolls back to the previous account."""
+
+import json
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from claude_swap import cli
+from claude_swap.exceptions import AccountNotFoundError
+from claude_swap.models import Platform
+from claude_swap.switcher import ClaudeAccountSwitcher
+
+
+def _switcher() -> ClaudeAccountSwitcher:
+    s = ClaudeAccountSwitcher()
+    s.platform = Platform.LINUX
+    s._setup_directories()
+    s._init_sequence_file()
+    return s
+
+
+def _creds(num: int) -> str:
+    return json.dumps({
+        "claudeAiOauth": {"accessToken": f"sk-{num}", "refreshToken": f"rt-{num}"},
+    })
+
+
+def _config(num: int, email: str) -> str:
+    return json.dumps({
+        "oauthAccount": {"emailAddress": email, "accountUuid": f"uuid-{num}"},
+    })
+
+
+def _add(s: ClaudeAccountSwitcher, num: int, email: str) -> None:
+    """Store account `num` with credential and config backups."""
+    s._write_account_credentials(str(num), email, _creds(num))
+    s._write_account_config(str(num), email, _config(num, email))
+    data = s._get_sequence_data()
+    data["accounts"][str(num)] = {
+        "email": email,
+        "uuid": f"uuid-{num}",
+        "organizationUuid": "",
+        "organizationName": "",
+        "added": "2024-01-01T00:00:00Z",
+    }
+    data["sequence"] = sorted({*data["sequence"], num})
+    if data["activeAccountNumber"] is None:
+        data["activeAccountNumber"] = num
+    s._write_json(s.sequence_file, data)
+
+
+def _log_in(home: Path, num: int, email: str) -> None:
+    """Make `email` the live Claude Code login."""
+    (home / ".claude" / ".credentials.json").write_text(_creds(num))
+    (home / ".claude.json").write_text(_config(num, email))
+
+
+def _live_email(home: Path) -> str:
+    config = json.loads((home / ".claude.json").read_text())
+    return config["oauthAccount"]["emailAddress"]
+
+
+class TestSwitchToPrevious:
+    def test_dash_rolls_back_to_the_previous_account(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "a@example.com"
+
+    def test_dash_again_toggles_back_like_cd_dash(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        s.switch_to("-", json_output=True)
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "b@example.com"
+
+    def test_rotation_is_rolled_back_too(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _add(s, 3, "c@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch(json_output=True)
+        assert _live_email(temp_home) == "b@example.com"
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "a@example.com"
+
+    def test_dash_follows_the_account_when_slots_are_renumbered(
+        self, temp_home: Path
+    ):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _add(s, 3, "c@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        s.swap_accounts("1", "3")
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "a@example.com"
+
+    def test_dash_without_a_previous_switch_is_an_error(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+
+        with pytest.raises(AccountNotFoundError, match="No previous account"):
+            s.switch_to("-", json_output=True)
+
+    def test_dash_to_a_removed_account_is_an_error(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        s.remove_account("1", assume_yes=True)
+
+        with pytest.raises(AccountNotFoundError, match="no longer managed"):
+            s.switch_to("-", json_output=True)
+
+    def test_leaving_an_unmanaged_login_forgets_the_previous_account(
+        self, temp_home: Path
+    ):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _add(s, 3, "c@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        _log_in(temp_home, 9, "unmanaged@example.com")
+        s.switch_to("3", json_output=True)
+
+        with pytest.raises(AccountNotFoundError, match="No previous account"):
+            s.switch_to("-", json_output=True)
+
+    def test_forced_reactivation_keeps_the_previous_account(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        s.switch_to("2", json_output=True, force=True)
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "a@example.com"
+
+
+class TestSwitchDashCommand:
+    def test_switch_dash_reaches_switch_to(self):
+        with patch("claude_swap.cli.ClaudeAccountSwitcher") as switcher_cls, \
+             patch.object(sys, "argv", ["claude-swap", "switch", "-"]), \
+             patch("os.geteuid", return_value=1000, create=True), \
+             patch("claude_swap.update_check.check_for_update", return_value=None):
+            cli.main()
+        switcher_cls.return_value.switch_to.assert_called_once_with(
+            "-", json_output=False, force=False
+        )
