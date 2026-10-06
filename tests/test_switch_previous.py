@@ -79,3 +79,16 @@ class TestSwitchToPrevious:
         s.switch_to("-", json_output=True)
 
         assert _live_email(temp_home) == "b@example.com"
+
+    def test_rotation_is_rolled_back_too(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _add(s, 3, "c@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch(json_output=True)
+        assert _live_email(temp_home) == "b@example.com"
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "a@example.com"
