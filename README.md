@@ -141,6 +141,7 @@ A session refreshes its own copy of the account's token, so once it exits, the c
 - With `--share-history`, a session started under one account shows up in `--resume` under the others, and nothing already saved is lost.
 - With `--share-plugins`, all accounts use one plugin store: installing or updating a plugin in any of them (or in your default profile) makes it available in all. Plugins a profile already had are merged into `~/.claude/plugins` first — nothing is lost, and where both sides have the same plugin the shared copy wins (plugin auto-update converges versions anyway).
 - User-scope MCP servers (`claude mcp add -s user`) are mirrored from your default profile on every launch — manage them there; changes made inside a session don't persist. Definitions are copied as-is (including inline `env`/`headers` values), but MCP OAuth logins are not — HTTP servers may ask you to authenticate once per profile via `/mcp`.
+- Folders you already trusted in your default profile ("Do you trust the files in this folder?") are trusted in session profiles too, so a session does not ask again. Only folders you said yes to are copied, and nothing is ever un-trusted. `--no-share` turns this off.
 - `--no-share` turns sharing off and removes the mirrored MCP config (profiles that never mirrored are left alone).
 
 </details>
