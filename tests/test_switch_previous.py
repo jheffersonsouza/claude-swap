@@ -119,3 +119,14 @@ class TestSwitchToPrevious:
 
         with pytest.raises(AccountNotFoundError, match="No previous account"):
             s.switch_to("-", json_output=True)
+
+    def test_dash_to_a_removed_account_is_an_error(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        s.remove_account("1", assume_yes=True)
+
+        with pytest.raises(AccountNotFoundError, match="no longer managed"):
+            s.switch_to("-", json_output=True)

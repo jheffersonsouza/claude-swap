@@ -6209,9 +6209,14 @@ class ClaudeAccountSwitcher:
         previous = data.get("previousAccount")
         if not previous:
             raise AccountNotFoundError("No previous account to switch back to")
-        return self._find_account_slot(
+        slot = self._find_account_slot(
             data, previous["email"], previous["organizationUuid"]
         )
+        if slot is None:
+            raise AccountNotFoundError(
+                f"The previous account ({previous['email']}) is no longer managed"
+            )
+        return slot
 
     @staticmethod
     def _record_previous_account(data: dict, departed: str) -> None:
