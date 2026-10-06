@@ -92,3 +92,18 @@ class TestSwitchToPrevious:
         s.switch_to("-", json_output=True)
 
         assert _live_email(temp_home) == "a@example.com"
+
+    def test_dash_follows_the_account_when_slots_are_renumbered(
+        self, temp_home: Path
+    ):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _add(s, 3, "c@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+        s.switch_to("2", json_output=True)
+        s.swap_accounts("1", "3")
+
+        s.switch_to("-", json_output=True)
+
+        assert _live_email(temp_home) == "a@example.com"
