@@ -9,3 +9,5 @@ Status: needs-triage
 ## To find out
 
 Whether copying or linking the Profile-owned credential keys (`mcpOAuth`, `mcpOAuthClientConfig`; `SHARED_CREDENTIAL_KEYS` in `src/claude_swap/credentials.py`) into Parallel Instance Profiles stays safe when those tokens rotate.
+
+As of 2026-10-05, no upstream PR shares MCP server logins into Parallel Instance Profiles. #300 does the opposite (per-Account MCP servers), and #163 (`--share-all`) conflicts with main.

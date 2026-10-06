@@ -10,3 +10,5 @@ Status: needs-triage
 
 - Why upstream treats `plugins/` as Account- or Instance-scoped.
 - Whether linking `plugins/`, or part of it, into a Parallel Instance's Profile is safe.
+
+Upstream PR #294 adds an opt-in `--share-plugins` flag that links the store to `~/.claude/plugins`. It was mergeable on 2026-10-05; see [Merge useful upstream PRs into the fork](07-merge-upstream-prs.md).
