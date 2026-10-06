@@ -6203,10 +6203,34 @@ class ClaudeAccountSwitcher:
             if json_output else None
         )
 
+    def _previous_account_slot(self) -> str:
+        """Slot of the account the most recent switch left (``switch -``)."""
+        data = self._get_sequence_data() or {}
+        previous = data["previousAccount"]
+        return self._find_account_slot(
+            data, previous["email"], previous["organizationUuid"]
+        )
+
+    @staticmethod
+    def _record_previous_account(data: dict, departed: str) -> None:
+        """Remember the account a switch leaves, for ``switch -``.
+
+        Stored as the (email, organizationUuid) identity rather than the slot
+        number, like mappings.json: swap, move and remove renumber slots.
+        """
+        account = data["accounts"][departed]
+        data["previousAccount"] = {
+            "email": account.get("email", ""),
+            "organizationUuid": account.get("organizationUuid", "") or "",
+        }
+
     def switch_to(
         self, identifier: str, json_output: bool = False, force: bool = False
     ) -> dict | None:
         """Switch to specific account.
+
+        ``identifier`` is a slot number, email, alias, or ``-`` for the
+        account the most recent switch left (like ``cd -``).
 
         ``force`` activates the target's stored credentials directly, skipping
         both the already-active no-op guard and the backup-current step —
@@ -6217,6 +6241,9 @@ class ClaudeAccountSwitcher:
 
         # Ensure org fields are migrated before resolving accounts
         self._get_sequence_data_migrated()
+
+        if identifier == "-":
+            identifier = self._previous_account_slot()
 
         # Resolve identifier
         if not identifier.isdigit():
@@ -7216,6 +7243,7 @@ class ClaudeAccountSwitcher:
                 self._logger.info("Updated config file")
 
                 # Step 5: Update sequence state
+                self._record_previous_account(data, current_account)
                 data["activeAccountNumber"] = int(target_account)
                 data["lastUpdated"] = get_timestamp()
                 self._write_json(self.sequence_file, data)
