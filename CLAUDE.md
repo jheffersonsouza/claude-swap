@@ -4,6 +4,7 @@ Fork of [realiti4/claude-swap](https://github.com/realiti4/claude-swap) (`cswap`
 
 ## Working here
 
+- New session: if `.scratch/handoff.md` exists, read it first, and delete it once nothing in it is still needed.
 - Daily use runs a snapshot of this fork, installed globally with `uv tool install .`. After merging into `main`, refresh it with `uv tool install . --reinstall`. Try work in progress with `uv run cswap ...`. Both share the account store in `~/.local/share/claude-swap/`; to keep a trial apart, point `XDG_DATA_HOME` at a temp dir.
 - `~/.bashrc` sources `shell/shortcuts.bash` (`cs`, `cr`).
 - Tests: `uv sync --locked`, then `uv run pytest` (same as `.github/workflows/ci.yml`).
