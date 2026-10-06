@@ -6219,14 +6219,19 @@ class ClaudeAccountSwitcher:
         return slot
 
     @staticmethod
-    def _record_previous_account(data: dict, departed: str | None) -> None:
+    def _record_previous_account(
+        data: dict, departed: str | None, target: str
+    ) -> None:
         """Remember the account a switch leaves, for ``switch -``.
 
         Stored as the (email, organizationUuid) identity rather than the slot
         number, like mappings.json: swap, move and remove renumber slots.
         Leaving a login cswap does not manage forgets the previous account,
-        since there is no stored account to go back to.
+        since there is no stored account to go back to. Re-activating the
+        current account (--force, reconcile) leaves it as it was.
         """
+        if departed == target:
+            return
         account = data["accounts"].get(departed)
         if account is None:
             data.pop("previousAccount", None)
@@ -6989,7 +6994,9 @@ class ClaudeAccountSwitcher:
                         self._write_json(config_path, target_config_data)
                     config_written = True
 
-                    self._record_previous_account(data, current_account)
+                    self._record_previous_account(
+                        data, current_account, target_account
+                    )
                     data["activeAccountNumber"] = int(target_account)
                     data["lastUpdated"] = get_timestamp()
                     self._write_json(self.sequence_file, data)
@@ -7256,7 +7263,9 @@ class ClaudeAccountSwitcher:
                 self._logger.info("Updated config file")
 
                 # Step 5: Update sequence state
-                self._record_previous_account(data, current_account)
+                self._record_previous_account(
+                    data, current_account, target_account
+                )
                 data["activeAccountNumber"] = int(target_account)
                 data["lastUpdated"] = get_timestamp()
                 self._write_json(self.sequence_file, data)
