@@ -4,6 +4,7 @@
 #
 #   cs                  open the dashboard
 #   cs 3 | cs a@b.com   switch the default login to that account
+#   cs -                switch back to the previous account
 #   cs <command> ...    any other cswap command (status, list, add, auto...)
 #   cr N [args...]      run account N in this terminal, sharing history and
 #                       plugins; args go to claude (cr 2 --resume)
@@ -14,7 +15,7 @@
 cs() {
   case "$1" in
     "") cswap ;;
-    [0-9]*|*@*) cswap switch "$@" ;;
+    [0-9]*|*@*|-) cswap switch "$@" ;;
     *) cswap "$@" ;;
   esac
 }

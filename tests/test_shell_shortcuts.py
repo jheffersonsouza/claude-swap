@@ -50,6 +50,9 @@ class TestCs:
     def test_account_switches(self, cswap_argv, account):
         assert cswap_argv("cs", account) == ["switch", account]
 
+    def test_dash_rolls_back_to_the_previous_account(self, cswap_argv):
+        assert cswap_argv("cs", "-") == ["switch", "-"]
+
     @pytest.mark.parametrize(
         "words",
         [("status",), ("list", "--token-status"), ("add",), ("switch", "dev")],
