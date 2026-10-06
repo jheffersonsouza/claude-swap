@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from claude_swap.exceptions import AccountNotFoundError
 from claude_swap.models import Platform
 from claude_swap.switcher import ClaudeAccountSwitcher
 
@@ -107,3 +110,12 @@ class TestSwitchToPrevious:
         s.switch_to("-", json_output=True)
 
         assert _live_email(temp_home) == "a@example.com"
+
+    def test_dash_without_a_previous_switch_is_an_error(self, temp_home: Path):
+        s = _switcher()
+        _add(s, 1, "a@example.com")
+        _add(s, 2, "b@example.com")
+        _log_in(temp_home, 1, "a@example.com")
+
+        with pytest.raises(AccountNotFoundError, match="No previous account"):
+            s.switch_to("-", json_output=True)

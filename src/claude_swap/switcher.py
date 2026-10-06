@@ -6206,7 +6206,9 @@ class ClaudeAccountSwitcher:
     def _previous_account_slot(self) -> str:
         """Slot of the account the most recent switch left (``switch -``)."""
         data = self._get_sequence_data() or {}
-        previous = data["previousAccount"]
+        previous = data.get("previousAccount")
+        if not previous:
+            raise AccountNotFoundError("No previous account to switch back to")
         return self._find_account_slot(
             data, previous["email"], previous["organizationUuid"]
         )
