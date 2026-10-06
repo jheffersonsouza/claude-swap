@@ -4,7 +4,7 @@ Fork of [realiti4/claude-swap](https://github.com/realiti4/claude-swap) (`cswap`
 
 ## Working here
 
-- Daily use from this checkout: `uv tool install --editable .`; code changes apply on the next `cswap` run.
+- Daily use runs the upstream release, installed globally with `uv tool install claude-swap`. Try this checkout without replacing it: `uv run cswap ...`. Both share the account store in `~/.local/share/claude-swap/`; to keep a trial apart, point `XDG_DATA_HOME` at a temp dir.
 - Tests: `uv sync --locked`, then `uv run pytest` (same as `.github/workflows/ci.yml`).
 - `upstream` is realiti4/claude-swap. Sync with `git fetch upstream && git merge upstream/main`.
 - Fork-only files (`CLAUDE.md`, `CONTEXT.md`, `docs/agents/`, `docs/adr/`, `.scratch/`) stay off branches meant for upstream PRs; branch those from `upstream/main`.
