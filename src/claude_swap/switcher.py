@@ -793,8 +793,13 @@ class ClaudeAccountSwitcher:
         (history is preserved). A LIVE session keeps its own copy untouched — claude
         manages it; pulling credentials out from under a running process would be
         worse than the drift caveat — but gets a stale marker so setup_session
-        re-bootstraps it once it is no longer live.
+        re-bootstraps it once it is no longer live. A profile with its own
+        login was never seeded from the backup, so it is left alone.
         """
+        from claude_swap.session import has_own_login
+
+        if has_own_login(self._session_dir(account_num, email)):
+            return
         if self._live_session_pids(account_num, email):
             from claude_swap.session import mark_session_stale
 
@@ -2103,9 +2108,9 @@ class ClaudeAccountSwitcher:
         """Body of ``consume_backup_grant``; caller holds the consume lock."""
         from claude_swap.session import (
             is_session_stale,
+            profile_holds_slot_family,
             read_session_credentials,
             session_dir_for,
-            session_identity_drifted,
         )
 
         try:
@@ -2195,7 +2200,7 @@ class ClaudeAccountSwitcher:
                         # deliberate re-add/import): never let it supersede
                         # the backup it is presumed stale against.
                         and not is_session_stale(sdir)
-                        and not session_identity_drifted(sdir, email, org_uuid)
+                        and profile_holds_slot_family(sdir, email, org_uuid)
                     ):
                         prof_oauth = oauth.extract_oauth_data(profile)
                         cur_exp = (input_oauth or {}).get("expiresAt") or 0
@@ -2735,13 +2740,15 @@ class ClaudeAccountSwitcher:
         hold the same refresh token, refresh tokens are single-use, and
         whichever copy refreshes second gets invalid_grant (Claude Code then
         wipes its credential, so that login reads as logged out). An
-        unreadable session record counts: it may be a live one.
+        unreadable session record counts: it may be a live one. A profile
+        with its own login holds a separate token family, so it never does.
         """
-        from claude_swap.session import scan_live_sessions
+        from claude_swap.session import has_own_login, scan_live_sessions
 
-        sessions, unreadable = scan_live_sessions(
-            self._session_dir(account_num, email)
-        )
+        session_dir = self._session_dir(account_num, email)
+        if has_own_login(session_dir):
+            return None
+        sessions, unreadable = scan_live_sessions(session_dir)
         if sessions:
             pids = ", ".join(str(s.pid) for s in sessions)
             return f"a live session-mode Claude instance (PID {pids})"
@@ -2832,15 +2839,17 @@ class ClaudeAccountSwitcher:
         """
         from claude_swap.session import (
             is_session_stale,
+            profile_holds_slot_family,
             read_session_credentials,
-            session_identity_drifted,
         )
 
         session_dir = self._session_dir(account_num, email)
         if is_session_stale(session_dir):
             return None
         profile = read_session_credentials(session_dir)
-        if not profile or session_identity_drifted(session_dir, email, org_uuid):
+        if not profile or not profile_holds_slot_family(
+            session_dir, email, org_uuid
+        ):
             return None
         backup, unreadable = self._read_account_credentials_ex(account_num, email)
         if unreadable:
@@ -4861,8 +4870,8 @@ class ClaudeAccountSwitcher:
             return self._fetch_active_usage(str(num), email, creds, org_uuid)
 
         from claude_swap.session import (
+            profile_holds_slot_family,
             read_session_credentials,
-            session_identity_drifted,
         )
 
         has_live_session = bool(self._live_session_pids(str(num), email))
@@ -4878,16 +4887,18 @@ class ClaudeAccountSwitcher:
         # claude out the same way.
         session_dir = self._session_dir(str(num), email)
         session_creds = read_session_credentials(session_dir)
-        if session_creds and session_identity_drifted(session_dir, email, org_uuid):
+        if session_creds and not profile_holds_slot_family(
+            session_dir, email, org_uuid
+        ):
             # An in-session /login re-pointed the profile at a different
-            # account; fetching with its credential would record THAT
-            # account's usage under this slot's label. The profile no longer
-            # holds this slot's token family, so the backup below is both the
-            # right identity and safe to refresh — treat the slot as not
-            # session-owned for this fetch.
+            # account (fetching with its credential would record THAT
+            # account's usage under this slot's label), or the profile has
+            # its own login. Either way it no longer holds this slot's token
+            # family, so the backup below is safe to refresh — treat the slot
+            # as not session-owned for this fetch.
             self._logger.debug(
-                f"Session profile for account {num} is logged in as a "
-                f"different account; fetching usage from the backup credential"
+                f"Session profile for account {num} holds another token "
+                f"family; fetching usage from the backup credential"
             )
             session_creds = None
             has_live_session = False
