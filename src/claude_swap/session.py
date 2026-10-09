@@ -571,36 +571,41 @@ class SessionManager:
 
         config_dir_preset = os.environ.get("CLAUDE_CONFIG_DIR")
         if config_dir_preset:
-            # With CLAUDE_CONFIG_DIR set, "current default account" is
-            # meaningless (we may already be inside a session terminal), so
-            # the same-account fast path below must not trigger.
             warning(
                 f"CLAUDE_CONFIG_DIR is already set ({config_dir_preset}); "
                 "overriding it for this launch."
             )
-        else:
-            # Same-account fast path: never create a second credential copy
-            # for the account that is already the active default login —
-            # two copies of one account can drift if the server rotates the
-            # refresh token.
-            current = self.switcher._get_current_account()
-            if current is not None and current == (email, org_uuid):
-                if require_session:
-                    raise SessionError(
-                        f"Account-{account_num} ({email}) is the active default "
-                        "login, so this launch would run plain claude on the "
-                        "default login rather than in a session profile (a "
-                        "second copy of the active credential would drift). "
-                        "Switch the default login to another account first, "
-                        "or run `claude` directly."
-                    )
-                print(
-                    dimmed(
-                        f"Account-{account_num} ({email}) is already the active "
-                        "default login — launching claude directly."
-                    )
+        # Same-account fast path: never create a second credential copy
+        # for the account that is already the active default login — two
+        # copies hold one single-use refresh token, so whichever refreshes
+        # second is logged out. A preset CLAUDE_CONFIG_DIR (we may be inside
+        # a session terminal) doesn't change which account the default login
+        # is, so read the default profile's identity, not the env's.
+        current = (
+            self.switcher._get_default_login_account()
+            if config_dir_preset
+            else self.switcher._get_current_account()
+        )
+        if current is not None and current == (email, org_uuid):
+            if require_session:
+                raise SessionError(
+                    f"Account-{account_num} ({email}) is the active default "
+                    "login, so this launch would run plain claude on the "
+                    "default login rather than in a session profile (a "
+                    "second copy of its single-use refresh token would log one "
+                    "copy out). "
+                    "Switch the default login to another account first, "
+                    "or run `claude` directly."
                 )
-                self._exec(claude_bin, claude_args, env=dict(os.environ))
+            print(
+                dimmed(
+                    f"Account-{account_num} ({email}) is already the active "
+                    "default login — launching claude directly."
+                )
+            )
+            env = dict(os.environ)
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            self._exec(claude_bin, claude_args, env=env)
 
         scrubbed = [v for v in AUTH_OVERRIDE_ENV_VARS if os.environ.get(v)]
         if scrubbed:

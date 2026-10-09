@@ -42,6 +42,7 @@ from claude_swap.session import (
     stale_marker_for,
 )
 from claude_swap.switcher import ClaudeAccountSwitcher
+from tests.conftest import make_live
 
 ACCOUNT_EMAIL = "account2@example.com"
 ACCOUNT_NUM = "2"
@@ -171,14 +172,6 @@ def refresh_rotates(monkeypatch):
         ClaudeAccountSwitcher, "consume_backup_grant", fake_gate
     )
     return calls
-
-
-def make_live(session_dir: Path, pid: int | None = None) -> None:
-    """Simulate a live claude instance in a profile (own PID is always alive)."""
-    pid = pid or os.getpid()
-    pid_dir = session_dir / "sessions"
-    pid_dir.mkdir(parents=True, exist_ok=True)
-    (pid_dir / f"{pid}.json").write_text(json.dumps({"pid": pid}))
 
 
 def _mark_stale(session_dir: Path, legacy_location: bool = False) -> None:
@@ -1289,6 +1282,13 @@ def capture_exec(monkeypatch):
     )
 
 
+def _write_default_login(home: Path) -> None:
+    """Make account 2 the default login (``~/.claude.json``)."""
+    (home / ".claude.json").write_text(json.dumps({"oauthAccount": {
+        "emailAddress": ACCOUNT_EMAIL, "organizationUuid": ORG_UUID,
+    }}))
+
+
 class TestRun:
     def test_claude_not_on_path(self, manager, monkeypatch):
         monkeypatch.setattr(session_mod.shutil, "which", lambda name: None)
@@ -1356,7 +1356,8 @@ class TestRun:
         capsys,
     ):
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/somewhere/else")
-        # Even a matching identity must NOT fast-path when the env var is set.
+        # The config CLAUDE_CONFIG_DIR names matching is not the default login
+        # matching: only the latter may fast-path.
         monkeypatch.setattr(
             manager.switcher,
             "_get_current_account",
@@ -1370,6 +1371,33 @@ class TestRun:
         )
         assert exc.value.env["CLAUDE_CONFIG_DIR"] == str(session_dir)
         assert "overriding it for this launch" in capsys.readouterr().out
+
+    def test_preset_config_dir_fast_paths_the_default_login(
+        self, manager, capture_exec, monkeypatch, temp_home,
+        auth_status_tracks_seed, refresh_rotates, capsys
+    ):
+        """The fast path asks about the DEFAULT login, which a preset
+        CLAUDE_CONFIG_DIR does not change. A profile for the account that is
+        already the default login would hold a second copy of its single-use
+        refresh token; the first refresh logs the other copy out."""
+        _write_default_login(temp_home)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/somewhere/else")
+
+        with pytest.raises(_ExecCalled) as exc:
+            manager.run("2", [])
+
+        assert "CLAUDE_CONFIG_DIR" not in exc.value.env
+        assert "already the active default login" in capsys.readouterr().out
+
+    def test_preset_config_dir_require_session_refuses_the_default_login(
+        self, manager, capture_exec, monkeypatch, temp_home,
+        auth_status_tracks_seed, refresh_rotates
+    ):
+        _write_default_login(temp_home)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/somewhere/else")
+
+        with pytest.raises(SessionError, match="active default login"):
+            manager.run("2", [], require_session=True)
 
     def test_auth_override_vars_scrubbed_from_session_env(
         self,
@@ -1541,23 +1569,40 @@ class TestGuards:
         assert block_real_keychain.get_password(service, account) is None
         assert not seeded_switcher.backup_dir.exists()
 
-    def test_switch_warns_on_live_target_but_completes(
-        self, seeded_switcher, monkeypatch, capsys
-    ):
+    def test_switch_refuses_live_target(self, seeded_switcher, monkeypatch):
+        """The default login and a live session would hold ONE refresh token.
+        Refresh tokens are single-use, so whichever copy refreshes second gets
+        invalid_grant and Claude Code wipes it — the default login reads as
+        logged out within one access-token lifetime, not "if" anything."""
         session_dir = session_dir_for(
             seeded_switcher.backup_dir, ACCOUNT_NUM, ACCOUNT_EMAIL
         )
         make_live(session_dir)
         # Direct-activation path (no live default identity) keeps this focused.
         monkeypatch.setattr(seeded_switcher, "_get_current_account", lambda: None)
-        monkeypatch.setattr(seeded_switcher, "list_accounts", lambda **kw: None)
 
-        seeded_switcher._perform_switch(ACCOUNT_NUM)
+        with pytest.raises(SwitchError, match="live session-mode"):
+            seeded_switcher._perform_switch(ACCOUNT_NUM)
 
-        out = capsys.readouterr().out
-        assert "live session-mode" in out
         data = seeded_switcher._get_sequence_data()
-        assert data["activeAccountNumber"] == int(ACCOUNT_NUM)
+        assert data["activeAccountNumber"] == 1
+
+    def test_switch_refuses_target_with_unreadable_session_record(
+        self, seeded_switcher, monkeypatch
+    ):
+        """Not knowing whether a session is live is not knowing it isn't."""
+        session_dir = session_dir_for(
+            seeded_switcher.backup_dir, ACCOUNT_NUM, ACCOUNT_EMAIL
+        )
+        (session_dir / "sessions").mkdir(parents=True)
+        (session_dir / "sessions" / "123.json").write_text("{not json")
+        monkeypatch.setattr(seeded_switcher, "_get_current_account", lambda: None)
+
+        with pytest.raises(SwitchError, match="could not be read"):
+            seeded_switcher._perform_switch(ACCOUNT_NUM)
+
+        data = seeded_switcher._get_sequence_data()
+        assert data["activeAccountNumber"] == 1
 
     def test_switch_refuses_live_target_whose_profile_is_ahead(
         self, seeded_switcher, monkeypatch

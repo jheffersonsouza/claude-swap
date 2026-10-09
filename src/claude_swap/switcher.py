@@ -79,6 +79,7 @@ from claude_swap.paths import (
     get_backup_root,
     get_credentials_path,
     get_default_claude_config_home,
+    get_default_global_config_path,
     get_global_config_path,
     get_legacy_backup_root,
     migrate_legacy_backup_dir,
@@ -1825,10 +1826,11 @@ class ClaudeAccountSwitcher:
     def switchable_account_numbers(self) -> list[str]:
         """Account numbers in rotation order eligible for automatic selection.
 
-        Excludes slots without usable stored backups and slots the user has
-        disabled (``cswap disable``). Disabled slots stay managed and remain
-        valid explicit ``cswap switch <num|email>`` targets — they are only
-        held out of automatic rotation and the usage-aware strategies.
+        Excludes slots without usable stored backups, slots the user has
+        disabled (``cswap disable``), and slots a live ``cswap run`` session
+        holds (``_perform_switch`` refuses those). Disabled slots stay managed
+        and remain valid explicit ``cswap switch <num|email>`` targets — they
+        are only held out of automatic rotation and the usage-aware strategies.
         """
         data = self._get_sequence_data() or {}
         return [
@@ -1836,6 +1838,7 @@ class ClaudeAccountSwitcher:
             for num in data.get("sequence", [])
             if self._account_is_switchable(str(num))
             and not self._disabled_from_data(data, str(num))
+            and not self._in_use_by_session(data, str(num))
         ]
 
     @staticmethod
@@ -2725,6 +2728,35 @@ class ClaudeAccountSwitcher:
         sessions, _ = scan_live_sessions(self._session_dir(account_num, email))
         return [s.pid for s in sessions]
 
+    def _live_session_holder(self, account_num: str, email: str) -> str | None:
+        """What keeps a slot's session profile in use, or ``None``.
+
+        Such a slot cannot also become the default login: both copies would
+        hold the same refresh token, refresh tokens are single-use, and
+        whichever copy refreshes second gets invalid_grant (Claude Code then
+        wipes its credential, so that login reads as logged out). An
+        unreadable session record counts: it may be a live one.
+        """
+        from claude_swap.session import scan_live_sessions
+
+        sessions, unreadable = scan_live_sessions(
+            self._session_dir(account_num, email)
+        )
+        if sessions:
+            pids = ", ".join(str(s.pid) for s in sessions)
+            return f"a live session-mode Claude instance (PID {pids})"
+        if unreadable:
+            return f"{unreadable} session record(s) that could not be read"
+        return None
+
+    def _in_use_by_session(self, data: dict, account_num: str) -> bool:
+        """``_live_session_holder`` for a slot in already-loaded sequence data."""
+        record = data.get("accounts", {}).get(str(account_num)) or {}
+        email = record.get("email", "")
+        return bool(email) and self._live_session_holder(
+            str(account_num), email
+        ) is not None
+
     def _ensure_no_live_session(self, account_num: str, email: str, action: str) -> None:
         """Refuse a destructive operation while a session-mode claude is live.
 
@@ -2958,7 +2990,15 @@ class ClaudeAccountSwitcher:
         triple = self._get_current_identity_triple()
         return None if triple is None else triple[:2]
 
-    def _get_current_identity_triple(self) -> tuple[str, str, str] | None:
+    def _get_default_login_account(self) -> tuple[str, str] | None:
+        """``_get_current_account`` for the DEFAULT profile, even when
+        ``CLAUDE_CONFIG_DIR`` names another one (e.g. a session's)."""
+        triple = self._get_current_identity_triple(get_default_global_config_path())
+        return None if triple is None else triple[:2]
+
+    def _get_current_identity_triple(
+        self, config_path: Path | None = None
+    ) -> tuple[str, str, str] | None:
         """``(email, org_uuid, account_uuid)`` from ONE read of ``.claude.json``.
 
         ``add_account`` used to read the config for its identity and again
@@ -2967,7 +3007,7 @@ class ClaudeAccountSwitcher:
         ``_reject_foreign_credential_capture`` exists to close, so the guard
         must not widen it.
         """
-        config_path = self._get_claude_config_path()
+        config_path = config_path or self._get_claude_config_path()
         if not config_path.exists():
             return None
         data = self._read_json(config_path)
@@ -5327,6 +5367,7 @@ class ClaudeAccountSwitcher:
             if str(n) != str(current_num)
             and self._account_is_switchable(str(n))
             and not self._disabled_from_data(data, str(n))
+            and not self._in_use_by_session(data, str(n))
         ]
         if not others:
             return None, "none"
@@ -6107,6 +6148,17 @@ class ClaudeAccountSwitcher:
                         f"cswap --add-account --slot {candidate})"
                     )
                 continue
+            if self._in_use_by_session(data, candidate):
+                if json_output:
+                    warnings.append(
+                        f"Skipped Account-{candidate} (live cswap run session)"
+                    )
+                else:
+                    print(
+                        f"{accent('Skipping')} Account-{candidate} "
+                        "(live cswap run session)"
+                    )
+                continue
             if strategy == "next-available":
                 headroom = oauth.account_headroom(usage.get(candidate), models)
                 if headroom is not None and headroom <= 0:
@@ -6701,9 +6753,12 @@ class ClaudeAccountSwitcher:
         Returns ``{"from": ref|None, "to": ref, "warnings": [...]}``, capturing the
         left/landed identities under the lock so callers don't reconstruct ``from``
         after the mutation. When ``emit_output`` is False (JSON mode) all human
-        output is suppressed — the live-session warning, the "Switched"/"Activated"
-        lines, the nested list_accounts() summary and the followup — and the
-        live-session warning rides back in ``warnings`` instead.
+        output is suppressed — the credential-backup warnings, the
+        "Switched"/"Activated" lines, the nested list_accounts() summary and the
+        followup — and those warnings ride back in ``warnings`` instead.
+
+        Refuses a target that a live ``cswap run`` session holds (see
+        ``_live_session_holder``).
 
         ``force_activate`` routes through the direct activation path even when a
         managed live login exists: the stored backup is written over the live
@@ -6713,60 +6768,43 @@ class ClaudeAccountSwitcher:
         The post-switch display runs after the lock releases so that persist
         callbacks inside list_accounts() can re-acquire it.
         """
-        from claude_swap.session import scan_live_sessions
-
         self._refuse_session_shell()
         warnings_out: list[str] = []
         # Session-mode drift. Switching the default login to an account that
         # also has a live session profile puts the same refresh token in two
-        # config dirs — if the server rotates it, one copy goes stale — which
-        # is a warning. But once the profile has already rotated past the
-        # backup, the backup is a consumed generation and activating it is
-        # certain to fail: refuse. With nothing running against the profile
-        # the fix is simpler still — adopt its credential into the backup
-        # first, and the switch activates the live generation.
+        # config dirs. Refresh tokens are single-use, so this is not a risk but
+        # a certainty: whichever copy refreshes second gets invalid_grant and
+        # is logged out, within one access-token lifetime. Refuse. With nothing
+        # running against the profile, adopt its credential into the backup
+        # first, so the switch activates the live generation.
         pre_data = self._get_sequence_data() or {}
         pre_account = pre_data.get("accounts", {}).get(target_account, {})
         pre_email = pre_account.get("email", "")
         if pre_email:
             pre_org = pre_account.get("organizationUuid", "") or ""
-            sessions, unreadable = scan_live_sessions(
-                self._session_dir(target_account, pre_email)
-            )
-            pids = [s.pid for s in sessions]
-            if pids or unreadable:
-                if self._session_profile_ahead(target_account, pre_email, pre_org):
-                    who = (
-                        "a live session-mode Claude instance "
-                        f"(PID {', '.join(map(str, pids))})"
-                        if pids
-                        else f"{unreadable} session record(s) that could not be read"
-                    )
-                    raise SwitchError(
-                        f"Account-{target_account} ({pre_email}) has {who}, and "
-                        "its session profile's credential has rotated past the "
-                        "stored backup: the backup is a consumed generation, and "
-                        "activating it would fail with invalid_grant on its first "
-                        "refresh. Exit the session (its credential is adopted into "
-                        "the backup once nothing runs against it), or switch to "
-                        "another account."
-                    )
-                if pids:
-                    msg = (
-                        f"Account-{target_account} ({pre_email}) has a live "
-                        "session-mode Claude instance "
-                        f"(PID {', '.join(map(str, pids))}). Running the same "
-                        "account as both the default login and a session can make "
-                        "one copy's token go stale if the server rotates it. If the "
-                        "session later fails to authenticate, exit it and re-run "
-                        f"'cswap run {target_account}'."
-                    )
-                    if emit_output:
-                        warning(msg)
-                    else:
-                        warnings_out.append(msg)
-            else:
-                self._adopt_session_credential(target_account, pre_email, pre_org)
+            holder = self._live_session_holder(target_account, pre_email)
+            if holder and self._session_profile_ahead(
+                target_account, pre_email, pre_org
+            ):
+                raise SwitchError(
+                    f"Account-{target_account} ({pre_email}) has {holder}, and "
+                    "its session profile's credential has rotated past the "
+                    "stored backup: the backup is a consumed generation, and "
+                    "activating it would fail with invalid_grant on its first "
+                    "refresh. Exit the session (its credential is adopted into "
+                    "the backup once nothing runs against it), or switch to "
+                    "another account."
+                )
+            if holder:
+                raise SwitchError(
+                    f"Account-{target_account} ({pre_email}) has {holder}. "
+                    "Making it the default login too would put its refresh "
+                    "token in two places; refresh tokens are single-use, so "
+                    "whichever copy refreshes second gets invalid_grant and is "
+                    "logged out. Exit the session first, or switch to another "
+                    "account."
+                )
+            self._adopt_session_credential(target_account, pre_email, pre_org)
 
         # Pre-lock identity resolution (may hit the network — must happen
         # before the locks). Callers that already resolved (self-switch
