@@ -963,6 +963,16 @@ class SessionManager:
             with FileLock(
                 self.switcher.lock_file, timeout=_BOOTSTRAP_LOCK_TIMEOUT
             ), claude_credentials_lock(config_home=session_dir):
+                # A session that refreshed holds the slot's newest token
+                # generation, the backup a consumed one: save it before the
+                # profile's copy is replaced, or the slot is left dead.
+                ahead = self.switcher._session_profile_ahead(
+                    account_num, email, org_uuid
+                )
+                if ahead:
+                    self.switcher._store._write_account_credentials(
+                        account_num, email, ahead
+                    )
                 self._write_profile(session_dir, creds, oauth_account, "dark")
                 (session_dir / OWN_LOGIN_MARKER).touch()
                 clear_session_stale(session_dir)

@@ -3015,6 +3015,25 @@ class TestOwnLogin:
         # The profile's own history/settings survive.
         assert json.loads((profile / ".claude.json").read_text())["theme"] == "light"
 
+    def test_keeps_the_slots_newer_generation_the_profile_held(
+        self, manager, fake_claude_login
+    ):
+        """A session that refreshed holds the slot's newest token generation
+        and the backup a consumed one. Replacing the profile's credential
+        without saving that generation first leaves the slot dead."""
+        profile = _profile(manager)
+        profile.mkdir(parents=True)
+        (profile / ".credentials.json").write_text(ROTATED_CREDS)
+        (profile / ".claude.json").write_text(CONFIG)
+        make_live(profile)
+
+        manager.own_login(ACCOUNT_NUM)
+
+        assert manager.switcher.read_account_credentials(
+            ACCOUNT_NUM, ACCOUNT_EMAIL
+        ) == ROTATED_CREDS
+        assert read_session_credentials(profile) == OWN_CREDS
+
     def test_setup_session_never_reseeds_an_own_login_profile(
         self, manager, fake_claude_login, refresh_rotates
     ):
