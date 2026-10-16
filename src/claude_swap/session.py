@@ -869,7 +869,7 @@ class SessionManager:
                     f"login, and it is no longer valid. Log it in again: "
                     f"cswap run {account_num} --own-login"
                 )
-            self._sync_sharing(session_dir, share, share_history)
+            self._sync_sharing(session_dir, share, share_history, share_plugins)
             return session_dir, account_num, email
 
         # Deferred invalidation: backup credentials changed while this profile

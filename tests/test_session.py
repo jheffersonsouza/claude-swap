@@ -4229,6 +4229,21 @@ class TestOwnLogin:
         assert refresh_rotates == []  # the slot's grant is not spent on it
         assert read_session_credentials(profile) == OWN_CREDS
 
+    def test_setup_session_shares_plugins_into_an_own_login_profile(
+        self, manager, fake_claude_login, monkeypatch
+    ):
+        manager.own_login(ACCOUNT_NUM)
+        seen = []
+
+        def spy(session_dir, share, share_history=False, share_plugins=False):
+            seen.append(share_plugins)
+
+        monkeypatch.setattr(manager, "_sync_sharing", spy)
+
+        manager.setup_session(ACCOUNT_NUM, share=True, share_plugins=True)
+
+        assert seen == [True]
+
     def test_run_keeps_an_own_login_profile_for_the_default_login_account(
         self, manager, fake_claude_login, capture_exec, monkeypatch
     ):
