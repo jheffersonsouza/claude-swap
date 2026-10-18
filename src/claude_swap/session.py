@@ -64,7 +64,7 @@ from claude_swap.exceptions import (
     LockError,
     SessionError,
 )
-from claude_swap.fsutil import replace_with_retry
+from claude_swap.fsutil import atomic_write_text
 from claude_swap.macos_keychain import KeychainError
 from claude_swap.locking import FileLock
 from claude_swap.models import Platform
@@ -1137,18 +1137,14 @@ class SessionManager:
             os.chmod(session_dir, 0o700)
 
         creds_path = session_dir / ".credentials.json"
-        creds_path.write_text(creds, encoding="utf-8")
-        if sys.platform != "win32":
-            os.chmod(creds_path, 0o600)
+        atomic_write_text(creds_path, creds)
 
         config_path = session_dir / ".claude.json"
         existing = read_profile_config(session_dir) or {}
         existing["oauthAccount"] = oauth_account
         existing["hasCompletedOnboarding"] = True
         existing.setdefault("theme", theme)
-        config_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-        if sys.platform != "win32":
-            os.chmod(config_path, 0o600)
+        atomic_write_text(config_path, json.dumps(existing, indent=2))
 
     def _bootstrap(
         self, session_dir: Path, account_num: str, email: str, org_uuid: str
@@ -2355,18 +2351,10 @@ class SessionManager:
     def _write_manifest(self, manifest_path: Path, items: list[str]) -> None:
         mode = "symlink" if self.switcher.platform != Platform.WINDOWS else "copy"
         payload = json.dumps({"items": items, "mode": mode}, indent=2)
-        fd, tmp = tempfile.mkstemp(
-            dir=str(manifest_path.parent), prefix=".cswap-shared-", suffix=".tmp"
-        )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
-            replace_with_retry(tmp, manifest_path)
+            atomic_write_text(manifest_path, payload)
         except OSError:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+            pass  # best effort: a failed manifest must not fail a launch
 
     @staticmethod
     def _remove_managed(dest: Path) -> None:
